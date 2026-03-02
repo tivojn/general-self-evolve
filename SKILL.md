@@ -607,7 +607,7 @@ For web-based verification (Telegram Web, Discord, etc.):
 
 ### 5.7 Authenticated Browser Sessions (Playwright MCP)
 
-Pre-saved browser sessions enable authenticated access to 10 services without manual login. All sessions are Playwright `storageState` JSON files (cookies + localStorage).
+Pre-saved browser sessions enable authenticated access to 11 services without manual login. All sessions are Playwright `storageState` JSON files (cookies + localStorage).
 
 #### Auto-Login Flow (MUST follow this when accessing any web service)
 
@@ -641,7 +641,8 @@ EVERY TIME Playwright navigates to a service:
 ├── telegram.json       #  16K — Telegram Web
 ├── tradingview.json    #  51K — TradingView (charts/alerts)
 ├── whatsapp.json       #  13K — WhatsApp Web
-└── x_twitter.json      #  20K — X/Twitter
+├── x_twitter.json      #  20K — X/Twitter
+└── grok.json           # 100K — Grok (x.ai) — AI chat, image gen, DeepSearch
 ```
 
 #### How to Save a Session (after user logs in)
@@ -679,6 +680,7 @@ async (page) => {
 | **TradingView** | `tradingview.com` | Google SSO or email | "Open user menu" button |
 | **Reddit** | `reddit.com` | Google SSO or email (has CAPTCHA) | "Expand user menu" |
 | **LinkedIn** | `linkedin.com/login` | Google SSO or email+password | Feed page, "My Network" |
+| **Grok** | `grok.com` | X/Twitter SSO (auto via Cloudflare → X login) | Chat input, "What's on your mind?", History sidebar |
 
 #### Session Refresh Protocol
 
@@ -702,6 +704,7 @@ When a service shows logged-out state:
 - **LinkedIn aggressive session expiry** — Sessions expire faster than others; expect frequent refreshes
 - **Telegram/Discord/WhatsApp use QR codes** — No way to automate login; always requires mobile app scan
 - **Google SSO cascades** — Logging into Google often pre-auths Seeking Alpha, TradingView, GitHub, X/Twitter
+- **Grok uses X/Twitter SSO via Cloudflare** — First hit shows Cloudflare challenge (wait ~5s), then redirects to X login. If X session already loaded, Grok auto-auths. Save grok.json separately since it includes x.ai-specific cookies
 - **Playwright MCP `require` not available** — Use absolute paths in `browser_run_code`, not `require('path')` or `require('os')`
 - **Screenshot timeouts** — Some heavy pages (X/Twitter, Seeking Alpha) timeout on `browser_take_screenshot`; use `browser_snapshot` (accessibility tree) instead for verification
 - **Large snapshots** — Reddit, TradingView, Seeking Alpha produce 60KB+ snapshots; grep the output file for indicators instead of reading inline
@@ -716,6 +719,7 @@ When a service shows logged-out state:
 | **Social media posting** | X/Twitter, LinkedIn, Reddit |
 | **Messaging/notifications** | Telegram, Discord, WhatsApp |
 | **Code collaboration** | GitHub, Discord |
+| **AI image/video generation** | Grok (Imagine, DeepSearch) |
 | **Live testing (E2E)** | Telegram, Discord, WhatsApp |
 
 #### Security Notes
