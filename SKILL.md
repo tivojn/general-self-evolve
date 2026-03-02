@@ -592,17 +592,56 @@ When a live test finds a bug:
 For web-based verification (Telegram Web, Discord, etc.):
 
 ```
-1. Navigate to the web interface
-2. Take a snapshot (accessibility tree, not screenshot)
-3. Type a test message
-4. Wait for response (with timeout)
-5. Verify response content:
+1. Load saved browser session (see 5.7 below)
+2. Navigate to the web interface
+3. Take a snapshot (accessibility tree, not screenshot)
+4. Type a test message
+5. Wait for response (with timeout)
+6. Verify response content:
    - Correct agent responded
    - No identity confusion
    - No internal content leaked
    - Formatting correct
-6. Take a post-response snapshot for evidence
+7. Take a post-response snapshot for evidence
 ```
+
+### 5.7 Browser Session Injection for Automated Login
+
+Playwright E2E tests require authenticated browser sessions. Store session state files (cookies + localStorage) and inject them before navigating.
+
+**Session state files** are Playwright `storageState` JSON containing `cookies` and `origins` (localStorage). Store them at a known path (e.g., `~/.claude/telegram-session/state.json`).
+
+**Injection pattern for MCP Playwright** (which doesn't support `storageState` natively):
+
+1. **Cookies:** MCP Playwright preserves cookies across navigations within a session. If cookies alone aren't enough (e.g., Telegram Web uses localStorage for auth), use step 2.
+
+2. **localStorage injection:** Navigate to the target domain first, then inject via `browser_evaluate`:
+```javascript
+// Inject localStorage entries from saved state
+() => {
+  const entries = [["token", '"value"'], ["auth_key", '"value"']];
+  for (const [k, v] of entries) localStorage.setItem(k, v);
+}
+```
+Then reload the page — the app reads auth from localStorage on load.
+
+3. **Discord iframe trick:** Discord blocks `localStorage` on some pages. Use an iframe workaround:
+```javascript
+() => {
+  const iframe = document.createElement('iframe');
+  iframe.style.display = 'none';
+  document.body.appendChild(iframe);
+  iframe.contentWindow.localStorage.setItem('token', '"value"');
+  document.body.removeChild(iframe);
+}
+```
+
+**Session file locations** (check `~/.claude/` for saved sessions):
+- `~/.claude/telegram-session/state.json` — Telegram Web auth
+- `~/.claude/discord-session/state.json` — Discord Web auth
+- Other services: save via `playwright codegen --save-storage` after manual login
+
+**Important:** Session files contain auth tokens. Never commit them. Add to `.gitignore`.
 
 ---
 
