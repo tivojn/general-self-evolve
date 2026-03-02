@@ -1,7 +1,7 @@
 ---
 name: general-self-evolve
 description: "Point at any repo. Evaluate, plan, bootstrap credentials, then autonomously improve it. Works with any tech stack — code quality, tests, CI/CD, docs, deps, and more."
-version: 1.4.0
+version: 1.5.0
 author: community
 category: automation
 ---
@@ -605,43 +605,106 @@ For web-based verification (Telegram Web, Discord, etc.):
 7. Take a post-response snapshot for evidence
 ```
 
-### 5.7 Browser Session Injection for Automated Login
+### 5.7 Authenticated Browser Sessions (Playwright MCP)
 
-Playwright E2E tests require authenticated browser sessions. Store session state files (cookies + localStorage) and inject them before navigating.
+Pre-saved browser sessions enable authenticated access to 10 services without manual login. All sessions are Playwright `storageState` JSON files (cookies + localStorage).
 
-**Session state files** are Playwright `storageState` JSON containing `cookies` and `origins` (localStorage). Store them at a known path (e.g., `~/.claude/telegram-session/state.json`).
+#### Session Cookie Directory
 
-**Injection pattern for MCP Playwright** (which doesn't support `storageState` natively):
-
-1. **Cookies:** MCP Playwright preserves cookies across navigations within a session. If cookies alone aren't enough (e.g., Telegram Web uses localStorage for auth), use step 2.
-
-2. **localStorage injection:** Navigate to the target domain first, then inject via `browser_evaluate`:
-```javascript
-// Inject localStorage entries from saved state
-() => {
-  const entries = [["token", '"value"'], ["auth_key", '"value"']];
-  for (const [k, v] of entries) localStorage.setItem(k, v);
-}
 ```
-Then reload the page — the app reads auth from localStorage on load.
-
-3. **Discord iframe trick:** Discord blocks `localStorage` on some pages. Use an iframe workaround:
-```javascript
-() => {
-  const iframe = document.createElement('iframe');
-  iframe.style.display = 'none';
-  document.body.appendChild(iframe);
-  iframe.contentWindow.localStorage.setItem('token', '"value"');
-  document.body.removeChild(iframe);
-}
+~/.claude/session_cookies/
+├── discord.json        # 116K — Discord
+├── github.json         #  24K — GitHub
+├── google.json         #  26K — Google (YouTube inherits this)
+├── linkedin.json       #  84K — LinkedIn
+├── reddit.json         #  62K — Reddit
+├── seekingalpha.json   #  37K — Seeking Alpha (Portfolio access)
+├── telegram.json       #  16K — Telegram Web
+├── tradingview.json    #  51K — TradingView (charts/alerts)
+├── whatsapp.json       #  13K — WhatsApp Web
+└── x_twitter.json      #  20K — X/Twitter
 ```
 
-**Session file locations** (check `~/.claude/` for saved sessions):
-- `~/.claude/telegram-session/state.json` — Telegram Web auth
-- `~/.claude/discord-session/state.json` — Discord Web auth
-- Other services: save via `playwright codegen --save-storage` after manual login
+#### How to Save a Session (after user logs in)
 
-**Important:** Session files contain auth tokens. Never commit them. Add to `.gitignore`.
+```javascript
+// Via browser_run_code after user manually logs in:
+async (page) => {
+  const context = page.context();
+  await context.storageState({ path: `${process.env.HOME}/.claude/session_cookies/<service>.json` });
+  return 'saved';
+}
+```
+
+#### How to Verify a Session is Still Valid
+
+```
+1. browser_navigate → service URL
+2. browser_snapshot → grep for login indicators:
+   - Logged in: "user menu", "Profile", "Dashboard", "Portfolio", "Create Post"
+   - Logged out: "Sign in", "Log In", "Sign up", "Create account"
+3. If logged out → session expired → trigger Session Refresh Protocol
+```
+
+#### Service-Specific Login Patterns
+
+| Service | Login URL | Login Method | Logged-In Indicator |
+|---|---|---|---|
+| **Telegram** | `web.telegram.org` | QR code scan (mobile app) | Chat list visible |
+| **Discord** | `discord.com/login` | QR code scan (mobile app) | Server list + channels |
+| **WhatsApp** | `web.whatsapp.com` | QR code scan (mobile app) | Chat list visible |
+| **X/Twitter** | `x.com/i/flow/login` | Google SSO or email+password | Home feed, "What's happening?" |
+| **GitHub** | `github.com/login` | Google SSO or email+password | Dashboard, avatar, repos |
+| **Google** | `myaccount.google.com` | Email+password (often pre-authed via SSO) | Account name + email shown |
+| **Seeking Alpha** | `seekingalpha.com` | Google SSO or email | "Portfolio" in nav |
+| **TradingView** | `tradingview.com` | Google SSO or email | "Open user menu" button |
+| **Reddit** | `reddit.com` | Google SSO or email (has CAPTCHA) | "Expand user menu" |
+| **LinkedIn** | `linkedin.com/login` | Google SSO or email+password | Feed page, "My Network" |
+
+#### Session Refresh Protocol
+
+When a service shows logged-out state:
+
+```
+1. DETECT   — Navigate to service, check for login indicators
+2. NAVIGATE — Go to login URL
+3. NOTIFY   — Tell user: "<service> session expired. Please log in."
+4. WAIT     — User logs in manually (QR scan, Google SSO, or credentials)
+5. CONFIRM  — User says "in" / "done" / "logged in" / "scanned"
+6. VERIFY   — Take snapshot, confirm logged-in state
+7. SAVE     — storageState → ~/.claude/session_cookies/<service>.json
+8. LOG      — "Session refreshed for <service>"
+```
+
+#### Gotchas
+
+- **Reddit has CAPTCHA** — `browser_click` on the reCAPTCHA checkbox sometimes auto-passes; if not, user must solve manually
+- **X/Twitter auto-opens Google tab** — A second tab for Google SSO may open; close it after login with `browser_tabs` → close
+- **LinkedIn aggressive session expiry** — Sessions expire faster than others; expect frequent refreshes
+- **Telegram/Discord/WhatsApp use QR codes** — No way to automate login; always requires mobile app scan
+- **Google SSO cascades** — Logging into Google often pre-auths Seeking Alpha, TradingView, GitHub, X/Twitter
+- **Playwright MCP `require` not available** — Use absolute paths in `browser_run_code`, not `require('path')` or `require('os')`
+- **Screenshot timeouts** — Some heavy pages (X/Twitter, Seeking Alpha) timeout on `browser_take_screenshot`; use `browser_snapshot` (accessibility tree) instead for verification
+- **Large snapshots** — Reddit, TradingView, Seeking Alpha produce 60KB+ snapshots; grep the output file for indicators instead of reading inline
+
+#### Use Cases for Authenticated Sessions
+
+| Use Case | Services Needed |
+|---|---|
+| **Financial research** | Seeking Alpha, TradingView, Google |
+| **Market sentiment scraping** | X/Twitter, Reddit, Seeking Alpha |
+| **Portfolio monitoring** | TradingView, Seeking Alpha |
+| **Social media posting** | X/Twitter, LinkedIn, Reddit |
+| **Messaging/notifications** | Telegram, Discord, WhatsApp |
+| **Code collaboration** | GitHub, Discord |
+| **Live testing (E2E)** | Telegram, Discord, WhatsApp |
+
+#### Security Notes
+
+- Session cookies dir is NOT in any git repo — lives in `~/.claude/session_cookies/`
+- Never commit session files or display cookie values in logs
+- Sessions contain auth tokens — treat as credentials
+- If a session file is compromised, log out from the service's security settings
 
 ---
 
@@ -849,6 +912,9 @@ golangci-lint run --fix
 | Git operations | Native git commands |
 | CI/CD (GitHub) | `gh` CLI |
 | Dependency scanning | `npm audit` / `pip audit` / `cargo audit` |
+| Authenticated browser (10 services) | Playwright MCP + `~/.claude/session_cookies/*.json` (see §5.7) |
+| Financial web scraping | Playwright + `seekingalpha.json` / `tradingview.json` sessions |
+| Social media E2E testing | Playwright + `telegram.json` / `discord.json` / `whatsapp.json` sessions |
 
 ---
 
@@ -1133,7 +1199,7 @@ Every 10 runs (or when the Learned Patterns section exceeds 200 lines), the agen
 
 ---
 
-## Learned Patterns (v1.3.0)
+## Learned Patterns (v1.5.0)
 
 Patterns discovered from real-world self-evolve sessions. **This section grows automatically with every use.**
 
@@ -1265,6 +1331,17 @@ After 80+ rounds on a single codebase:
 - Shift from "find bugs and add tests" to "architectural hardening and cross-cutting concerns"
 - Update MEMORY.md and SKILL.md after every session (Phase 8 META-EVOLVE mandate)
 - Track cumulative round count across sessions to avoid re-doing work
+
+### Playwright MCP Session Management [recipe] [tool]
+Batch-saving browser sessions for 10 services via Playwright MCP:
+- **Workflow:** `browser_navigate` → check if logged in → if not, user logs in → `browser_run_code` with `context.storageState()` → save to `~/.claude/session_cookies/<service>.json`
+- **`require()` is undefined** in `browser_run_code` — always use absolute paths, never `require('path')` or `require('os')`
+- **`browser_take_screenshot` times out** on heavy pages (X, Seeking Alpha) — use `browser_snapshot` + grep for login indicators instead
+- **Google SSO cascades:** Logging into Google often pre-auths 4-5 other services (Seeking Alpha, TradingView, GitHub, X/Twitter). Check these after Google login — they may already be authed.
+- **QR-code services** (Telegram, Discord, WhatsApp) cannot be automated — always require user's mobile app scan
+- **Reddit CAPTCHA:** `browser_click` on reCAPTCHA checkbox sometimes auto-passes; page may load fully after just navigating (CAPTCHA auto-solved)
+- **Session verification pattern:** Navigate → snapshot → grep output file for "Sign in" vs "user menu"/"Profile"/"Portfolio" — faster than screenshots
+- **Consolidate session dirs:** Keep one canonical dir (`~/.claude/session_cookies/`) rather than per-service dirs. Easier to enumerate and manage.
 
 ---
 
