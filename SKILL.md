@@ -609,6 +609,25 @@ For web-based verification (Telegram Web, Discord, etc.):
 
 Pre-saved browser sessions enable authenticated access to 10 services without manual login. All sessions are Playwright `storageState` JSON files (cookies + localStorage).
 
+#### Auto-Login Flow (MUST follow this when accessing any web service)
+
+```
+EVERY TIME Playwright navigates to a service:
+  1. CHECK    — Does ~/.claude/session_cookies/<service>.json exist?
+  2a. YES    — Load cookies/localStorage, navigate, take snapshot
+  2b. NO     — Tell user: "I need <service> access. Please log in once — I'll save the session for next time."
+  3. VERIFY  — Is the page showing logged-in indicators? (see table below)
+  4a. YES   — Proceed with the task
+  4b. NO    — Session expired → run Session Refresh Protocol below
+               → Tell user: "<service> session expired. Please log in again — I'll re-save it."
+  5. SAVE   — After successful login, ALWAYS save: storageState → ~/.claude/session_cookies/<service>.json
+  6. CONFIRM — "Saved. Next time I won't need you to log in."
+```
+
+**First-time UX:** The user logs in ONCE per service. The skill saves the session. All future sessions across conversations reuse the saved cookies — no login needed until they expire.
+
+**Key principle:** Never ask the user to log in without explaining WHY and that it's a ONE-TIME action. Always save after login. Always confirm the save.
+
 #### Session Cookie Directory
 
 ```
